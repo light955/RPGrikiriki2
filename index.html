@@ -156,7 +156,7 @@
 
       function connectAndStartGame() {
         // --- WebSocket ---
-        ws = new WebSocket('ws://' + location.host);
+        ws = new WebSocket('wss://' + location.host);
 
         ws.onopen = () => {
           console.log('WebSocket connected. Sending name.');
