@@ -7,6 +7,8 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+const PORT = process.env.PORT || 8080; // 環境変数PORTを優先し、なければ8080を使用
+
 // Serve static files from the 'example34' directory
 app.use(express.static(path.join(__dirname)));
 
@@ -226,6 +228,6 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(8080, () => {
-  console.log('Server is listening on port 8080');
+server.listen(PORT, () => {
+  console.log(`Server is listening on port ${PORT}`);
 });
