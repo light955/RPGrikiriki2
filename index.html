@@ -311,7 +311,7 @@
       const loadImg = (n) => {
         return new Promise((resolve, reject) => {
           img[n] = new Image();
-          img[n].src = `chip/${String(n).padStart(3, "0")}.png`;
+          img[n].src = `/chip/${String(n).padStart(3, "0")}.png`;
           img[n].onload = () => {
             resolve();
           };
