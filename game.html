@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Multiplayer Game</title>
+    <style>
+      body {
+        font-family: 'Courier New', Courier, monospace;
+        text-align: center;
+        background-color: black;
+        color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+      }
+      .screen {
+        background-color: #222;
+        padding: 2em 4em;
+        border-radius: 8px;
+        border: 2px solid #555;
+      }
+      .screen h1 {
+        font-size: 3em;
+        color: #00ff00;
+        text-shadow: 0 0 10px #00ff00;
+      }
+      .screen button, .screen input {
+        font-family: inherit;
+        font-size: 1.2em;
+        padding: 10px 20px;
+        background-color: #444;
+        color: white;
+        border: 1px solid #666;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 1em;
+      }
+      .screen button:hover {
+        background-color: #555;
+      }
+      .screen input {
+        cursor: text;
+        text-align: center;
+      }
+      .hidden {
+        display: none;
+      }
+      #game-container {
+        /* Block display is handled by removing .hidden class */
+      }
+      #chat-container {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        width: 300px;
+        height: 95vh;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+      }
+      #messages {
+        list-style-type: none;
+        margin: 0;
+        padding: 0 10px;
+        overflow-y: scroll;
+        flex-grow: 1;
+        text-align: left;
+      }
+      #chat-form {
+        display: flex;
+        padding: 10px;
+      }
+      #message-input {
+        flex-grow: 1;
+      }
+      #bg {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+
+    <div id="title-screen" class="screen">
+      <h1>VOID WALKER</h1>
+      <button id="start-btn">Start</button>
+    </div>
+
+    <div id="name-input-screen" class="screen hidden">
+      <h2>Enter Your Name</h2>
+      <input type="text" id="name-input" maxlength="12" />
+      <button id="enter-game-btn">Enter Game</button>
+    </div>
+
+    <div id="game-container" class="hidden">
+        <canvas id="bg"></canvas>
+        <div id="chat-container">
+            <ul id="messages"></ul>
+            <form id="chat-form">
+                <input id="message-input" autocomplete="off" /><button>Send</button>
+            </form>
+        </div>
+    </div>
+    
+    <script src="me_data.js"></script>
+    <script src="me_worldmap.js"></script>
+
+    <script>
+      "use strict";
+
+      // --- Screen Elements ---
+      const titleScreen = document.getElementById('title-screen');
+      const nameInputScreen = document.getElementById('name-input-screen');
+      const gameContainer = document.getElementById('game-container');
+      
+      const startBtn = document.getElementById('start-btn');
+      const nameInput = document.getElementById('name-input');
+      const enterGameBtn = document.getElementById('enter-game-btn');
+
+      // --- Chat Elements ---
+      const messages = document.getElementById('messages');
+      const chatForm = document.getElementById('chat-form');
+      const messageInput = document.getElementById('message-input');
+
+      // --- Game State ---
+      let ws;
+      let plId = -1;
+      let myName = '';
+      let otherPlayers = {};
+      const keyState = {};
+
+      // --- Screen Transitions ---
+      startBtn.addEventListener('click', () => {
+        titleScreen.classList.add('hidden');
+        nameInputScreen.classList.remove('hidden');
+        nameInput.focus();
+      });
+
+      enterGameBtn.addEventListener('click', () => {
+        const name = nameInput.value.trim();
+        if (name) {
+          myName = name;
+          nameInputScreen.classList.add('hidden');
+          gameContainer.classList.remove('hidden');
+          connectAndStartGame();
+        }
+      });
+      
+      nameInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          enterGameBtn.click();
+        }
+      });
+
+      function connectAndStartGame() {
+        // --- WebSocket ---
+        ws = new WebSocket('ws://' + location.host);
+
+        ws.onopen = () => {
+          console.log('WebSocket connected. Sending name.');
+          // Send name to server immediately after connecting
+          ws.send(JSON.stringify({ type: 'join', name: myName }));
+        };
+        
+        // --- Event Listeners ---
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (messageInput.value) {
+                const message = messageInput.value;
+                ws.send(JSON.stringify({ type: 'chat', message: message }));
+                addMessage(`${myName} (You): ${message}`);
+                messageInput.value = '';
+            }
+        });
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            switch (data.type) {
+                case 'init':
+                    plId = data.id;
+                    otherPlayers = data.players; // Just copy the whole list from the server
+
+                    // Sync our own initial position from the server's assignment
+                    if (otherPlayers[plId]) {
+                        plX = otherPlayers[plId].x;
+                        plY = otherPlayers[plId].y;
+                        plD = otherPlayers[plId].d;
+                        myName = otherPlayers[plId].name; // Make sure our name is correct
+                    }
+                    
+                    console.log(`Player ${plId} (${myName}) initialized.`);
+                    // Now that we are initialized, start the game
+                    initializeGame();
+                    break;
+                case 'connect':
+                    if (data.player.id !== plId) {
+                        otherPlayers[data.player.id] = data.player;
+                        console.log(`Player ${data.player.name} connected.`);
+                        addMessage(`--- ${data.player.name} has joined the game. ---`);
+                    }
+                    break;
+                case 'disconnect':
+                    const disconnectedPlayerName = otherPlayers[data.id]?.name || `Player ${data.id}`;
+                    delete otherPlayers[data.id];
+                    console.log(`Player ${disconnectedPlayerName} disconnected.`);
+                    addMessage(`--- ${disconnectedPlayerName} has left the game. ---`);
+                    break;
+                case 'move':
+                    if (data.player.id === plId) {
+                        // This is a position correction from the server for our own player
+                        plX = data.player.x;
+                        plY = data.player.y;
+                        plD = data.player.d;
+                    } else if (otherPlayers[data.player.id]) {
+                        // This is a move update for another player
+                        otherPlayers[data.player.id] = data.player;
+                    }
+                    break;
+                case 'chat':
+                    const chatPlayerName = otherPlayers[data.id]?.name || `Player ${data.id}`;
+                    addMessage(`${chatPlayerName}: ${data.message}`);
+                    break;
+                case 'error': // Generic error from server
+                    console.error('Server error:', data.message);
+                    break;
+            }
+        };
+
+        ws.onclose = () => {
+            addMessage('--- Disconnected from server. ---');
+        };
+      }
+
+      function addMessage(message) {
+          const li = document.createElement('li');
+          li.textContent = message;
+          messages.appendChild(li);
+          messages.scrollTop = messages.scrollHeight;
+      }
+
+      // --- Game Logic ---
+      // 変数一覧
+      // --------------------------------------------------
+      // 定数
+      const CWIDTH = 960;
+      const CHEIGHT = 960;
+      const FPS = 8;
+      const INTERVAL = 1000 / FPS;
+
+      // キャンバス
+      const canvas = document.getElementById("bg");
+      const cnt = canvas.getContext("2d");
+
+      // 画像
+      const img = [];
+
+      // ゲーム状態
+      let tmr = 0;
+      let plX = 29,
+        plY = 15,
+        plD = 0;
+      let moved = false;
+      // --------------------------------------------------
+
+      function initializeGame() {
+        // キャンバスの設定
+        let winW = window.innerWidth;
+        let winH = window.innerHeight;
+
+        if (winH < (winW * CHEIGHT) / CWIDTH) {
+          winW = Math.floor((winH * CWIDTH) / CHEIGHT);
+        } else {
+          winH = Math.floor((CHEIGHT * winW) / CWIDTH);
+        }
+        canvas.width = winW;
+        canvas.height = winH;
+        const scale = winW / CWIDTH;
+        cnt.scale(scale, scale);
+        cnt.textAlign = "center";
+        cnt.textBaseline = "middle";
+        cnt.font = "14px 'Courier New', Courier, monospace";
+
+        // キー入力
+        window.addEventListener("keydown", (event) => {
+          if (document.activeElement === messageInput) return;
+          keyState[event.key] = true;
+        });
+        window.addEventListener("keyup", (event) => {
+          keyState[event.key] = false;
+        });
+        
+        // 画像の読み込み & mainProcの開始
+        (async () => {
+            try {
+                const imagePromises = [];
+                for (let i = 0; i < CHIP_MAX + 1; i++) {
+                    imagePromises.push(loadImg(i));
+                }
+                await Promise.all(imagePromises);
+                console.log("全ての画像の読み込みが完了しました。");
+                mainProc();
+            } catch (error) {
+                console.error("画像の読み込み中にエラーが発生しました:", error);
+            }
+        })();
+      }
+
+      // 画像の読み込み関数
+      const loadImg = (n) => {
+        return new Promise((resolve, reject) => {
+          img[n] = new Image();
+          img[n].src = `chip/${String(n).padStart(3, "0")}.png`;
+          img[n].onload = () => {
+            resolve();
+          };
+          img[n].onerror = (e) => {
+            console.error(`画像 ${n} の読み込みに失敗しました`, e);
+            reject(e);
+          };
+        });
+      };
+
+      // 描画関数
+      const drawChip = (cn, dx, dy) => {
+        cnt.drawImage(img[cn], dx, dy);
+      };
+
+      const drawChr = (cn, dx, dy, dir, tmr, name) => {
+        const sx = CHIP_SIZE * (Math.floor(tmr / 4) % 2);
+        const sy = (CHIP_SIZE + 16) * dir;
+        cnt.drawImage(img[cn], sx, sy, 32, 48, dx, dy, 32, 48);
+        
+        // Draw name
+        if (name) {
+          cnt.fillStyle = 'white';
+          cnt.strokeStyle = 'black';
+          cnt.lineWidth = 2;
+          cnt.strokeText(name, dx + 16, dy - 8);
+          cnt.fillText(name, dx + 16, dy - 8);
+        }
+      };
+
+      // マップデータ
+      const getChip = (x, y) => {
+        if (x < 0 || x >= FIELD_W || y < 0 || y >= FIELD_H) return 4;
+        return MAPDAT[y][x];
+      };
+
+      const mainProc = () => {
+        tmr++;
+        moved = false;
+
+        // キャラクターの移動（クライアントサイド予測を廃止）
+        // キーが押されたら、移動の「意思」をサーバーに送るだけにする
+        let moveIntent = -1;
+        if (keyState["ArrowUp"]) {
+          plD = 0; // Update direction locally for immediate feedback
+          moveIntent = 0;
+        }
+        if (keyState["ArrowDown"]) {
+          plD = 1;
+          moveIntent = 1;
+        }
+        if (keyState["ArrowLeft"]) {
+          plD = 2;
+          moveIntent = 2;
+        }
+        if (keyState["ArrowRight"]) {
+          plD = 3;
+          moveIntent = 3;
+        }
+        
+        // Only send a message if a key is pressed
+        if (moveIntent !== -1) {
+            ws.send(JSON.stringify({ type: 'move', d: moveIntent }));
+        }
+
+        // フィールドを描画
+        const TILES_W = Math.floor(CWIDTH / CHIP_SIZE);
+        const TILES_H = Math.floor(CHEIGHT / CHIP_SIZE);
+        const halfW = Math.floor(TILES_W / 2);
+        const halfH = Math.floor(TILES_H / 2);
+
+        for (let y = 0; y < TILES_H; y++) {
+          for (let x = 0; x < TILES_W; x++) {
+            drawChip(
+              getChip(plX + x - halfW, plY + y - halfH),
+              x * CHIP_SIZE,
+              y * CHIP_SIZE
+            );
+          }
+        }
+
+        // 他のプレイヤーを描画
+        for (const id in otherPlayers) {
+            if (id == plId) continue; // Skip drawing ourself, we'll do it separately
+            const p = otherPlayers[id];
+            const dx = (p.x - plX + halfW) * CHIP_SIZE;
+            const dy = (p.y - plY + halfH) * CHIP_SIZE - 16;
+            if (dx > -CHIP_SIZE && dx < CWIDTH && dy > -CHIP_SIZE && dy < CHEIGHT) {
+              drawChr(CHIP_MAX, dx, dy, p.d, tmr, p.name);
+            }
+        }
+        
+        // 自分を最後に描画 (so it's on top)
+        drawChr(CHIP_MAX, halfW * CHIP_SIZE, halfH * CHIP_SIZE - 16, plD, tmr, myName);
+
+        //コールバック関数
+        setTimeout(mainProc, INTERVAL);
+      };
+
+      // Don't start game on load anymore, it starts after name input
+      // document.addEventListener("DOMContentLoaded", initializeGame);
+    </script>
+  </body>
+</html>
