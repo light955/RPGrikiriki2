@@ -156,7 +156,7 @@
 
       function connectAndStartGame() {
         // --- WebSocket ---
-        ws = new WebSocket('wss://' + location.host);
+        ws = new WebSocket('ws://' + location.host);
 
         ws.onopen = () => {
           console.log('WebSocket connected. Sending name.');
@@ -208,13 +208,9 @@
                     addMessage(`--- ${disconnectedPlayerName} has left the game. ---`);
                     break;
                 case 'move':
-                    if (data.player.id === plId) {
-                        // This is a position correction from the server for our own player
-                        plX = data.player.x;
-                        plY = data.player.y;
-                        plD = data.player.d;
-                    } else if (otherPlayers[data.player.id]) {
-                        // This is a move update for another player
+                    if (data.player.id !== plId && otherPlayers[data.player.id]) {
+                        // This is a move update for another player.
+                        // We are authoritative for our own player, so we ignore our own move updates.
                         otherPlayers[data.player.id] = data.player;
                     }
                     break;
@@ -348,33 +344,53 @@
         return MAPDAT[y][x];
       };
 
+      // Helper function for collision detection
+      const isWalkable = (x, y) => {
+        const chip = getChip(x, y);
+        // Grass (1-3) is walkable. Mountain (4) and Sea (9) are not.
+        return chip <= 3;
+      };
+
       const mainProc = () => {
         tmr++;
-        moved = false;
-
-        // キャラクターの移動（クライアントサイド予測を廃止）
-        // キーが押されたら、移動の「意思」をサーバーに送るだけにする
-        let moveIntent = -1;
-        if (keyState["ArrowUp"]) {
-          plD = 0; // Update direction locally for immediate feedback
-          moveIntent = 0;
-        }
-        if (keyState["ArrowDown"]) {
-          plD = 1;
-          moveIntent = 1;
-        }
-        if (keyState["ArrowLeft"]) {
-          plD = 2;
-          moveIntent = 2;
-        }
-        if (keyState["ArrowRight"]) {
-          plD = 3;
-          moveIntent = 3;
-        }
+        let keypressed = false;
         
-        // Only send a message if a key is pressed
-        if (moveIntent !== -1) {
-            ws.send(JSON.stringify({ type: 'move', d: moveIntent }));
+        let newX = plX;
+        let newY = plY;
+        let newD = plD;
+
+        // Check for key presses and calculate potential new position
+        if (keyState["ArrowUp"]) {
+          newD = 0;
+          newY--;
+          keypressed = true;
+        } else if (keyState["ArrowDown"]) {
+          newD = 1;
+          newY++;
+          keypressed = true;
+        } else if (keyState["ArrowLeft"]) {
+          newD = 2;
+          newX--;
+          keypressed = true;
+        } else if (keyState["ArrowRight"]) {
+          newD = 3;
+          newX++;
+          keypressed = true;
+        }
+
+        // Visually update direction immediately
+        plD = newD;
+
+        if (keypressed) {
+            // Check for collision
+            if (isWalkable(newX, newY)) {
+                // If walkable, update local player position immediately
+                plX = newX;
+                plY = newY;
+            }
+            // Send our new state (position and direction) to the server to be broadcast to others.
+            // This is sent even if blocked by a wall, so others see the direction change.
+            ws.send(JSON.stringify({ type: 'move', x: plX, y: plY, d: plD }));
         }
 
         // フィールドを描画

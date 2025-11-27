@@ -139,24 +139,14 @@ wss.on('connection', (ws) => {
         case 'move':
             const player = players[ws.playerId];
             if (player) {
-                let newX = player.x;
-                let newY = player.y;
-                const dir = data.d; // direction of intent from client
-
-                if (dir === 0) newY--; // Up
-                if (dir === 1) newY++; // Down
-                if (dir === 2) newX--; // Left
-                if (dir === 3) newX++; // Right
+                // In client-authoritative model, server trusts client's position.
+                // It just updates the state and broadcasts it to others.
+                player.x = data.x;
+                player.y = data.y;
+                player.d = data.d;
                 
-                // Server-side validation of the intended move
-                if (isWalkable(newX, newY)) {
-                    player.x = newX;
-                    player.y = newY;
-                    player.d = dir;
-                }
-                
-                // Whether move was valid or not, broadcast the player's TRUE position to everyone
-                broadcast({ type: 'move', player: player });
+                // Broadcast the update to OTHER players. The originating client has already updated its own state.
+                broadcastToOthers(ws, { type: 'move', player: player });
             }
             break;
 
